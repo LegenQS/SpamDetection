@@ -1,0 +1,141 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Parameters:
+  PredictionEndPoint:
+    Type: String
+    Default: sms-spam-classifier-mxnet-2022-04-17-20-48-02-429
+
+Resources:
+    S3Bucket:
+        Type: "AWS::S3::Bucket"
+        Properties:
+            BucketName: "cf-coms6998hw3-email-storage"
+            NotificationConfiguration: 
+                LambdaConfigurations: 
+                  - 
+                    Event: "s3:ObjectCreated:*"
+                    Function: !GetAtt LambdaFunction.Arn
+
+    S3BucketPolicy:
+        Type: "AWS::S3::BucketPolicy"
+        Properties:
+            Bucket: !Ref S3Bucket
+            PolicyDocument: 
+                Version: "2012-10-17"
+                Statement: 
+                  - 
+                    Sid: "AllowSESPuts"
+                    Effect: "Allow"
+                    Principal: 
+                        Service: "ses.amazonaws.com"
+                    Action: "s3:PutObject"
+                    Resource: !Sub "arn:aws:s3:::${S3Bucket}/*"
+                    Condition: 
+                        StringEquals:
+                            "AWS:SourceAccount": !Ref AWS::AccountId
+                            "AWS:SourceArn": !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:receipt-rule-set/${SESReceiptRuleSet}:receipt-rule/cf_ses_to_s3"
+                  - 
+                    Sid: "ExampleStmt"
+                    Effect: "Allow"
+                    Principal: 
+                        AWS: !GetAtt LambdaIAMRole.Arn
+                    Action: "s3:GetObject"
+                    Resource: !Sub "arn:aws:s3:::${S3Bucket}/*"
+
+
+    LambdaFunction:
+        Type: "AWS::Lambda::Function"
+        Properties:
+            Description: ""
+            Environment: 
+                Variables: 
+                    ENDPOINT_NAME: !Ref PredictionEndPoint
+            FunctionName: "cf-LF1hw3"
+            Handler: "lambda_function.lambda_handler"
+            Architectures: 
+              - "x86_64"
+            Code:
+              S3Bucket: coms6998-hw3-codebucket
+              S3Key: LF1hw3.zip
+            MemorySize: 128
+            Role: !GetAtt LambdaIAMRole.Arn
+            Runtime: "python3.9"
+            Timeout: 5
+            TracingConfig: 
+                Mode: "PassThrough"
+            Layers: 
+              - !Ref LambdaLayerVersion
+            EphemeralStorage: 
+                Size: 512
+
+    LambdaLayerVersion:
+        Type: "AWS::Lambda::LayerVersion"
+        Properties:
+            Description: ""
+            CompatibleRuntimes: 
+              - "python3.8"
+              - "python3.9"
+              - "python3.7"
+            LayerName: "cf_numpy_layer"
+            Content: 
+              S3Bucket: coms6998-hw3-codebucket
+              S3Key: numpy_layer.zip
+
+    LambdaIAMRole:
+        Type: "AWS::IAM::Role"
+        Properties:
+            Path: "/service-role/"
+            RoleName: "cf-LF1hw3-role"
+            AssumeRolePolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+              - Effect: Allow
+                Principal:
+                  Service:
+                  - lambda.amazonaws.com
+                Action:
+                  - 'sts:AssumeRole'
+            MaxSessionDuration: 3600
+            ManagedPolicyArns: 
+              - "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+              - "arn:aws:iam::aws:policy/AmazonSESFullAccess"
+              - "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
+              - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+
+    # LambdaPermissionSES:
+    #     Type: "AWS::Lambda::Permission"
+    #     Properties:
+    #         Action: "lambda:InvokeFunction"
+    #         FunctionName: !GetAtt LambdaFunction.Arn
+    #         Principal: "ses.amazonaws.com"
+    #         SourceArn: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:receipt-rule-set/spamfilter:receipt-rule/ses_to_s3_enable"
+
+    LambdaPermissionS3:
+        Type: "AWS::Lambda::Permission"
+        Properties:
+            Action: "lambda:InvokeFunction"
+            FunctionName: !GetAtt LambdaFunction.Arn
+            Principal: "s3.amazonaws.com"
+            SourceArn: 'arn:aws:s3:::cf-coms6998hw3-email-storage'
+
+    SESReceiptRule:
+        Type: "AWS::SES::ReceiptRule"
+        Properties:
+            Rule: 
+                ScanEnabled: true
+                Recipients: 
+                  - "artiste_yang@peteryoungy.com"
+                Actions: 
+                  - 
+                    S3Action: 
+                        TopicArn: !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:notify"
+                        BucketName: !Ref S3Bucket
+                Enabled: true
+                Name: "cf_ses_to_s3"
+                TlsPolicy: "Optional"
+            RuleSetName: "cf-coms6998hw3"
+
+    SESReceiptRuleSet:
+        Type: "AWS::SES::ReceiptRuleSet"
+        Properties:
+            RuleSetName: "cf-coms6998hw3"
